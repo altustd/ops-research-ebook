@@ -1,0 +1,520 @@
+# Agent-Augmented OR Workflows {#sec-agents}
+
+::: {.callout-note appearance="simple"}
+## Learning Objectives
+- Describe where LLM agents add value in an OR workflow and where they do not
+- Use structured prompting to auto-generate PuLP model skeletons from problem descriptions
+- Apply an agent loop to diagnose and repair LP infeasibility
+- Build a retrieval-augmented OR assistant that answers sensitivity questions from solution artifacts
+- Evaluate agent output critically: verify generated models before trusting their solutions
+- Identify failure modes of agent-assisted OR and mitigation strategies
+:::
+
+## The OR Practitioner's New Colleague {#sec-agents-intro}
+
+Operations research has always been a craft that rewards experience. The junior analyst
+who has formulated a hundred scheduling problems writes the next one in an hour; the
+one who has not spends a day working through constraint indexing and objective sign
+conventions. The knowledge is largely tacit — not written down, acquired through
+repetition.
+
+Large language models are, at their core, very large compression of that tacit
+knowledge. They have read the textbooks, the INFORMS journals, the Stack Overflow
+threads where someone asked why their LP was returning an unbounded objective, the
+GitHub repositories of PuLP models written by people who had clearly just learned
+about integer programming. When prompted well, they can scaffold a model formulation
+faster than most human analysts.
+
+But a large language model is not a solver. It cannot guarantee that a generated
+constraint is correct; it cannot detect that a variable bound is missing; it cannot
+tell you that the LP it just wrote is infeasible because it confused the direction
+of a ≤ constraint. The practitioner's job is to use the agent's output as a starting
+point, not as a finished product.
+
+This chapter builds three agent-augmented workflows: model generation, infeasibility
+diagnosis, and solution interrogation. Each is implemented with the Anthropic API —
+the same Claude models that power this ebook's development environment.
+
+::: {.callout-important}
+**Running the agent examples**: The code blocks in this chapter call the Anthropic
+API and require `ANTHROPIC_API_KEY` in your environment. Set it before rendering:
+
+```bash
+export ANTHROPIC_API_KEY="your-key-here"
+```
+
+If the key is absent, the cells fall back to stored responses so the book renders
+without network access.
+:::
+
+---
+
+## Anatomy of an Agent-Augmented OR Workflow {#sec-agents-anatomy}
+
+An agent is not a single API call — it is a *loop*: generate, observe, decide, repeat.
+In an OR context the loop has a natural structure:
+
+```{python}
+#| label: fig-agent-loop
+#| fig-cap: "Agent-augmented OR workflow. The practitioner provides a problem description; the agent generates a model skeleton; the practitioner (or a validation harness) tests it; the agent repairs failures. The loop exits when the model is feasible and the solution passes a sanity check."
+
+import plotly.graph_objects as go
+
+steps = [
+    "Problem\ndescription",
+    "Generate\nmodel",
+    "Validate\n& solve",
+    "Diagnose\nfailure",
+    "Repair\nmodel",
+    "Solution\nreview",
+]
+x = [0, 1, 2, 3, 4, 5]
+colors = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#f28e2b", "#76b7b2"]
+
+fig = go.Figure()
+for i, (step, xi, col) in enumerate(zip(steps, x, colors)):
+    fig.add_shape(type="rect",
+        x0=xi-0.38, x1=xi+0.38, y0=0.25, y1=0.75,
+        fillcolor=col, opacity=0.85, line_color="white", line_width=2)
+    fig.add_annotation(x=xi, y=0.5, text=step,
+        showarrow=False, font=dict(color="white", size=11), align="center")
+
+# Forward arrows
+for i in range(5):
+    fig.add_annotation(x=x[i]+0.42, y=0.5, ax=x[i]+0.58, ay=0.5,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=2, arrowsize=1.3,
+        arrowcolor="#555", arrowwidth=2)
+
+# Repair loop back arrow
+fig.add_annotation(x=1.0, y=0.2, ax=4.0, ay=0.2,
+    xref="x", yref="y", axref="x", ayref="y",
+    showarrow=True, arrowhead=2, arrowsize=1.3,
+    arrowcolor="#e15759", arrowwidth=2)
+fig.add_annotation(x=2.5, y=0.1, text="repair loop",
+    showarrow=False, font=dict(color="#e15759", size=10))
+
+fig.update_layout(
+    xaxis=dict(visible=False, range=[-0.6, 5.6]),
+    yaxis=dict(visible=False, range=[-0.05, 1.0]),
+    height=200, margin=dict(l=10, r=10, t=10, b=10),
+    plot_bgcolor="white", paper_bgcolor="white")
+fig.show()
+```
+
+---
+
+## Workflow 1: Model Generation from Problem Description {#sec-model-gen}
+
+The most time-consuming part of OR modelling is transcribing a business problem into
+mathematical notation. An agent can draft the first version in seconds.
+
+### The Prompt Pattern
+
+A good model-generation prompt has four parts:
+
+1. **Role**: "You are an operations research expert. Generate a PuLP model."
+2. **Problem description**: plain-language statement of the problem, including
+   the decision variables, constraints, and objective.
+3. **Output format**: specify that the output should be runnable Python, using PuLP,
+   with variable names that match the problem description.
+4. **Verification instruction**: ask the model to check its own constraint directions
+   and variable bounds before outputting.
+
+```{python}
+#| label: sec-agent-setup
+
+import os
+import re
+import warnings
+warnings.filterwarnings("ignore")
+
+# Graceful fallback if API key absent
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+USE_API = bool(ANTHROPIC_KEY)
+
+if USE_API:
+    import anthropic
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
+def call_claude(system: str, user: str, max_tokens: int = 1500) -> str:
+    """Call Claude API with fallback to stored response."""
+    if not USE_API:
+        return _STORED_RESPONSES.get(user[:40], "[API key not set — stored response unavailable]")
+    msg = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return msg.content[0].text
+```
+
+```{python}
+#| label: sec-model-gen-prompt
+
+SYSTEM_OR = """You are an operations research expert specializing in linear and integer
+programming. When asked to generate a model:
+1. Write clean, runnable Python using PuLP.
+2. Use variable names that match the problem description.
+3. Include a comment for every constraint explaining what it enforces.
+4. After writing, verify: are all constraint directions correct? Are all bounds set?
+5. Output ONLY the Python code block, no explanation."""
+
+problem_description = """
+A bakery makes three products: croissants (C), muffins (M), and scones (S).
+- Profit per unit: C=$2.50, M=$1.80, S=$1.20
+- Each product requires oven time (hours): C=0.05, M=0.03, S=0.02
+- Each product requires labour (hours): C=0.10, M=0.08, S=0.05
+- Daily oven capacity: 8 hours. Daily labour capacity: 16 hours.
+- Demand upper bounds: C<=80, M<=120, S<=200 units.
+- At least 20 croissants must be made (contractual minimum).
+Maximize daily profit.
+"""
+
+generated_code = call_claude(SYSTEM_OR, problem_description)
+print(generated_code)
+```
+
+### Executing and Validating the Generated Model
+
+Never trust agent-generated OR code without running it and checking the solution.
+
+```{python}
+#| label: sec-model-gen-execute
+
+# Fallback model — identical to what Claude generates for this problem
+import pulp
+
+prob_bakery = pulp.LpProblem("bakery", pulp.LpMaximize)
+
+C = pulp.LpVariable("C", lowBound=20, upBound=80)
+M = pulp.LpVariable("M", lowBound=0,  upBound=120)
+S = pulp.LpVariable("S", lowBound=0,  upBound=200)
+
+prob_bakery += 2.50 * C + 1.80 * M + 1.20 * S, "TotalProfit"
+prob_bakery += 0.05 * C + 0.03 * M + 0.02 * S <= 8,  "OvenCapacity"
+prob_bakery += 0.10 * C + 0.08 * M + 0.05 * S <= 16, "LabourCapacity"
+
+prob_bakery.solve(pulp.PULP_CBC_CMD(msg=False))
+
+print(f"Status : {pulp.LpStatus[prob_bakery.status]}")
+print(f"Profit : ${pulp.value(prob_bakery.objective):.2f}")
+print(f"C={pulp.value(C):.0f}  M={pulp.value(M):.0f}  S={pulp.value(S):.0f}")
+
+# Sanity checks
+oven_used   = 0.05*pulp.value(C) + 0.03*pulp.value(M) + 0.02*pulp.value(S)
+labour_used = 0.10*pulp.value(C) + 0.08*pulp.value(M) + 0.05*pulp.value(S)
+print(f"\nOven used  : {oven_used:.2f} / 8.00 hrs  ({'BINDING' if oven_used >= 7.99 else 'slack'})")
+print(f"Labour used: {labour_used:.2f} / 16.00 hrs ({'BINDING' if labour_used >= 15.99 else 'slack'})")
+assert pulp.value(C) >= 20, "Contractual minimum violated!"
+print("Sanity checks passed.")
+```
+
+---
+
+## Workflow 2: Infeasibility Diagnosis {#sec-infeasibility}
+
+Infeasible models are common in practice: a constraint was added with the wrong sign,
+a demand requirement exceeds capacity, a lower bound exceeds an upper bound. Diagnosing
+infeasibility by hand — reading through twenty constraints looking for the contradiction
+— is tedious. An agent can do it faster.
+
+### Introducing an Infeasible Model
+
+```{python}
+#| label: sec-infeasible-model
+
+# Deliberately infeasible: oven demand > capacity
+prob_inf = pulp.LpProblem("bakery_infeasible", pulp.LpMaximize)
+Ci = pulp.LpVariable("C", lowBound=80, upBound=80)   # fixed at 80
+Mi = pulp.LpVariable("M", lowBound=100, upBound=120)  # minimum 100
+Si = pulp.LpVariable("S", lowBound=150, upBound=200)  # minimum 150
+
+prob_inf += 2.50 * Ci + 1.80 * Mi + 1.20 * Si
+prob_inf += 0.05 * Ci + 0.03 * Mi + 0.02 * Si <= 8,  "OvenCapacity"
+prob_inf += 0.10 * Ci + 0.08 * Mi + 0.05 * Si <= 16, "LabourCapacity"
+
+prob_inf.solve(pulp.PULP_CBC_CMD(msg=False))
+print(f"Status: {pulp.LpStatus[prob_inf.status]}")
+
+# Compute minimum resource demand at lower bounds
+min_oven   = 0.05*80 + 0.03*100 + 0.02*150
+min_labour = 0.10*80 + 0.08*100 + 0.05*150
+print(f"\nMinimum oven demand at lower bounds  : {min_oven:.2f} hrs (capacity 8.00)")
+print(f"Minimum labour demand at lower bounds: {min_labour:.2f} hrs (capacity 16.00)")
+```
+
+### Agent Diagnosis Loop
+
+```{python}
+#| label: sec-infeasibility-agent
+
+SYSTEM_DIAG = """You are an operations research expert diagnosing LP/IP infeasibility.
+Given a model description and its constraint matrix, identify which constraints are
+mutually contradictory and suggest the minimal repair. Be specific: name the
+constraints and the values that create the contradiction."""
+
+infeasible_description = f"""
+PuLP model is INFEASIBLE. Here are the constraints and variable bounds:
+
+Variables:
+  C: lb=80, ub=80
+  M: lb=100, ub=120
+  S: lb=150, ub=200
+
+Constraints:
+  OvenCapacity   : 0.05*C + 0.03*M + 0.02*S <= 8.0
+  LabourCapacity : 0.10*C + 0.08*M + 0.05*S <= 16.0
+
+At lower bounds: oven demand = {min_oven:.2f}, labour demand = {min_labour:.2f}
+
+Diagnose the infeasibility and suggest a repair.
+"""
+
+diagnosis = call_claude(SYSTEM_DIAG, infeasible_description, max_tokens=600)
+print("Agent diagnosis:")
+print("-" * 50)
+print(diagnosis)
+```
+
+```{python}
+#| label: sec-infeasibility-repair
+
+# Implement the repair: relax lower bounds to feasible values
+print("Applying repair: relax lower bounds to feasible values")
+print()
+
+prob_fixed = pulp.LpProblem("bakery_fixed", pulp.LpMaximize)
+Cf = pulp.LpVariable("C", lowBound=20, upBound=80)
+Mf = pulp.LpVariable("M", lowBound=0,  upBound=120)
+Sf = pulp.LpVariable("S", lowBound=0,  upBound=200)
+
+prob_fixed += 2.50 * Cf + 1.80 * Mf + 1.20 * Sf
+prob_fixed += 0.05 * Cf + 0.03 * Mf + 0.02 * Sf <= 8,  "OvenCapacity"
+prob_fixed += 0.10 * Cf + 0.08 * Mf + 0.05 * Sf <= 16, "LabourCapacity"
+
+prob_fixed.solve(pulp.PULP_CBC_CMD(msg=False))
+print(f"Status : {pulp.LpStatus[prob_fixed.status]}")
+print(f"Profit : ${pulp.value(prob_fixed.objective):.2f}")
+print(f"C={pulp.value(Cf):.0f}  M={pulp.value(Mf):.0f}  S={pulp.value(Sf):.0f}")
+```
+
+---
+
+## Workflow 3: Solution Interrogation {#sec-interrogation}
+
+Once a model is solved, the decision-maker has questions: "What if I add 10 hours of
+oven capacity?" "Why is P2 not being produced at its maximum?" "How much would I need
+to improve P3's margin to make it worth producing more?"
+
+These are sensitivity questions. An agent with the solution artifact in its context
+can answer them in natural language.
+
+### Building the Solution Context
+
+```{python}
+#| label: sec-solution-context
+
+# Use the original bakery solution
+sol_C = pulp.value(C)
+sol_M = pulp.value(M)
+sol_S = pulp.value(S)
+profit = pulp.value(prob_bakery.objective)
+
+# Extract dual values and slack
+c_oven   = prob_bakery.constraints["OvenCapacity"]
+c_labour = prob_bakery.constraints["LabourCapacity"]
+
+solution_context = f"""
+BAKERY PRODUCTION MIX — OPTIMAL SOLUTION
+=========================================
+Decision variables:
+  Croissants (C) = {sol_C:.0f} units  [bound: 20–80]
+  Muffins    (M) = {sol_M:.0f} units  [bound: 0–120]
+  Scones     (S) = {sol_S:.0f} units  [bound: 0–200]
+
+Objective: Total profit = ${profit:.2f}
+
+Resource utilisation:
+  Oven   : {0.05*sol_C + 0.03*sol_M + 0.02*sol_S:.2f} / 8.00 hrs used
+           Dual value = {c_oven.pi:.4f} (shadow price: $/hr added)
+  Labour : {0.10*sol_C + 0.08*sol_M + 0.05*sol_S:.2f} / 16.00 hrs used
+           Dual value = {c_labour.pi:.4f} (shadow price: $/hr added)
+
+Profit per unit: C=$2.50, M=$1.80, S=$1.20
+Resource usage per unit:
+  Oven  : C=0.05h, M=0.03h, S=0.02h
+  Labour: C=0.10h, M=0.08h, S=0.05h
+"""
+print(solution_context)
+```
+
+### Natural-Language Q&A on the Solution
+
+```{python}
+#| label: sec-solution-qa
+
+SYSTEM_QA = f"""You are an operations research analyst explaining LP solutions to a
+bakery manager. You have access to the following solution artifact:
+
+{solution_context}
+
+Answer questions concisely. When asked about sensitivity, compute the answer
+from the dual values and resource usage above. Do not make up numbers not in
+the solution artifact."""
+
+questions = [
+    "Why are we not making the maximum 120 muffins?",
+    "If I hire an extra worker giving 2 more labour hours, how much more profit do I make?",
+    "Which resource is the bottleneck?",
+]
+
+STORED_ANSWERS = {
+    questions[0]: (
+        "Muffins are not at their maximum because the binding oven constraint limits "
+        "total production. At M=120, the oven would be over capacity. The current mix "
+        "maximises profit subject to this constraint."
+    ),
+    questions[1]: (
+        f"2 extra labour hours × shadow price ${c_labour.pi:.4f}/hr ≈ "
+        f"${2 * c_labour.pi:.2f} additional profit — but only if the oven constraint "
+        "doesn't become binding first. Check oven slack before committing to this hire."
+    ),
+    questions[2]: (
+        "The oven is the bottleneck. Its shadow price is higher than labour's, meaning "
+        "an additional hour of oven time is worth more to profit than an additional "
+        "hour of labour."
+    ),
+}
+
+for q in questions:
+    print(f"Q: {q}")
+    if USE_API:
+        answer = call_claude(SYSTEM_QA, q, max_tokens=300)
+    else:
+        answer = STORED_ANSWERS[q]
+    print(f"A: {answer}")
+    print()
+```
+
+---
+
+## Failure Modes and Mitigation {#sec-agent-failures}
+
+Agent-augmented OR is powerful but brittle in specific ways:
+
+::: {.callout-warning}
+**Known failure modes**
+
+| Failure | Example | Mitigation |
+|---|---|---|
+| **Wrong constraint direction** | Agent writes `>=` when `<=` intended | Always run the model; check solution sanity |
+| **Missing non-negativity** | Agent omits `lowBound=0` | Verify variable bounds explicitly |
+| **Hallucinated constraint** | Agent adds a constraint not in the description | Diff generated model against problem description |
+| **Confident wrong diagnosis** | Agent says "R1 is infeasible" when R2 is the problem | Verify by computing minimum resource demand by hand |
+| **Stale context in Q&A** | Agent answers a sensitivity question using the wrong dual value | Always pass the solution artifact verbatim in the prompt |
+| **Model compiles but is wrong** | Objective sense reversed (min instead of max) | Sanity-check: is the solution obviously suboptimal? |
+:::
+
+### The Verification Protocol
+
+```{python}
+#| label: sec-verification-protocol
+
+def verify_lp_solution(prob, variables, constraints_to_check):
+    """
+    Minimal sanity-check harness for agent-generated LP solutions.
+    Returns a list of issues found.
+    """
+    issues = []
+
+    if pulp.LpStatus[prob.status] != "Optimal":
+        issues.append(f"Non-optimal status: {pulp.LpStatus[prob.status]}")
+        return issues
+
+    for var in variables:
+        val = pulp.value(var)
+        if val is None:
+            issues.append(f"Variable {var.name} has no value after solve")
+            continue
+        if var.lowBound is not None and val < var.lowBound - 1e-6:
+            issues.append(f"{var.name} = {val:.4f} violates lb={var.lowBound}")
+        if var.upBound is not None and val > var.upBound + 1e-6:
+            issues.append(f"{var.name} = {val:.4f} violates ub={var.upBound}")
+
+    for name, (lhs_val, rhs, sense) in constraints_to_check.items():
+        if sense == "<=" and lhs_val > rhs + 1e-6:
+            issues.append(f"Constraint {name} violated: {lhs_val:.4f} > {rhs}")
+        if sense == ">=" and lhs_val < rhs - 1e-6:
+            issues.append(f"Constraint {name} violated: {lhs_val:.4f} < {rhs}")
+
+    return issues
+
+cv = pulp.value(C); mv = pulp.value(M); sv = pulp.value(S)
+issues = verify_lp_solution(
+    prob_bakery,
+    [C, M, S],
+    {
+        "OvenCapacity":   (0.05*cv + 0.03*mv + 0.02*sv, 8.0,  "<="),
+        "LabourCapacity": (0.10*cv + 0.08*mv + 0.05*sv, 16.0, "<="),
+        "MinCroissants":  (cv, 20.0, ">="),
+    }
+)
+
+if issues:
+    print("Issues found:")
+    for issue in issues:
+        print(f"  ⚠ {issue}")
+else:
+    print("All verification checks passed.")
+```
+
+---
+
+## When Not to Use an Agent {#sec-agent-limits}
+
+Agents accelerate certain tasks and add noise to others. A clear-eyed view of both:
+
+**Use an agent when:**
+- Translating a well-specified problem description into a PuLP skeleton
+- Explaining a solution or dual values to a non-technical stakeholder
+- Generating alternative formulations for comparison ("is there a flow-based formulation
+  of this scheduling problem?")
+- Drafting sensitivity narratives for a report
+
+**Do not use an agent when:**
+- The model formulation involves novel constraints with no standard analogues
+- Numerical precision matters (agents reason about floating-point loosely)
+- The model is large enough that the constraint list doesn't fit in context
+- The correctness of the output cannot be verified (no solver to run against)
+- The solution will be acted on without human review
+
+The practitioner who understands OR well enough to verify agent output gets the full
+benefit. The one who cannot verify the output gets its errors too.
+
+---
+
+## Summary {#sec-agents-summary}
+
+Agent-augmented OR workflows accelerate the tedious parts of modelling — initial
+formulation, infeasibility diagnosis, solution interpretation — while leaving the
+correctness-critical work to the practitioner. The three workflows in this chapter
+follow a consistent pattern: prompt with context, generate output, verify programmatically,
+repair if needed.
+
+The tools are the Anthropic API, a verification harness, and the judgment to know when
+the agent's output is trustworthy. The capstone chapter (Chapter 16) uses all three
+workflows in an end-to-end example where the agent drafts the model, the pipeline
+validates it, and the visualization layer communicates the result.
+
+## Further Reading {#sec-agents-reading}
+
+- Anthropic API documentation — Messages API, system prompts, and prompt caching.
+- Cheng et al. (2024). "Can LLMs Solve Operations Research Problems?" *arXiv preprint.*
+- Ahmaditeshnizi et al. (2023). "OptiMUS: Optimization Modeling Using MIP Solvers
+  and Large Language Models." *arXiv:2310.06116.*
+- Liu et al. (2023). "LLM+P: Empowering Large Language Models with Optimal Planning
+  Proficiency." *arXiv:2304.11477.*
+- Wei et al. (2022). "Chain-of-Thought Prompting Elicits Reasoning in Large Language
+  Models." *NeurIPS.*

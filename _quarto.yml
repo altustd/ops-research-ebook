@@ -3,16 +3,17 @@ project:
   output-dir: docs
 
 book:
-  title: "Modern Operations Research with Python"
-  subtitle: "Combining Optimization, Machine Learning, and Simulation"
+  title: "Data Science Tools for Classical Operations Research"
+  subtitle: "Python Implementation of Numerical Optimization & Modern OR"
   author: "Troy Altus"
   date: "May 2026"
   search: true
-  downloads: [pdf]
+  downloads: [pdf, epub]
+  sharing: [twitter, linkedin]
 
   chapters:
     - index.qmd
-    - part: "Part I: Mathematical Foundations"
+    - part: "Part I: Foundations"
       chapters:
         - chapters/01-foundations-linear-algebra.qmd
         - chapters/02-foundations-probability-statistics.qmd
@@ -23,7 +24,7 @@ book:
         - chapters/05-linear-programming.qmd
         - chapters/06-integer-programming.qmd
         - chapters/07-network-optimization.qmd
-    - part: "Part III: Uncertainty and Data-Driven Optimization"
+    - part: "Part III: Uncertainty and Data-Driven Approaches"
       chapters:
         - chapters/08-stochastic-programming.qmd
         - chapters/09-robust-optimization.qmd
@@ -33,10 +34,17 @@ book:
         - chapters/11-predict-then-optimize.qmd
         - chapters/12-reinforcement-learning-dp.qmd
         - chapters/13-learning-augmented-optimization.qmd
-    - part: "Part V: Applications"
+    - part: "Part V: Data Science Tooling for OR"
+      chapters:
+        - chapters/17-ds-pipeline-for-optimization.qmd
+        - chapters/18-interactive-visualization.qmd
+        - chapters/19-agent-augmented-workflows.qmd
+    - part: "Part VI: Applications"
       chapters:
         - chapters/14-supply-chain-optimization.qmd
         - chapters/15-resource-scheduling.qmd
+    - part: "Part VII: Capstone"
+      chapters:
         - chapters/16-capstone-pipeline.qmd
     - references.qmd
 
@@ -45,35 +53,19 @@ bibliography: references.bib
 format:
   html:
     theme: cosmo
-    code-fold: show
+    code-fold: true
     code-tools: true
     toc: true
     toc-depth: 3
     number-sections: true
     highlight-style: github
-    fig-width: 8
-    fig-height: 5
-    fig-align: center
-    html-math-method: mathjax
   pdf:
     documentclass: book
-    classoption: [letterpaper, 11pt]
-    geometry:
-      - top=1in
-      - bottom=1in
-      - left=1.25in
-      - right=1in
     number-sections: true
-    colorlinks: true
     toc: true
-    toc-depth: 3
-    fig-pos: "H"
-    keep-tex: false
-
-jupyter: orml
+    colorlinks: true
 
 execute:
   echo: true
   warning: false
   message: false
-  cache: false

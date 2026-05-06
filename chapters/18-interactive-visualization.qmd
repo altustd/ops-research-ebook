@@ -1,0 +1,602 @@
+# Interactive Visualization for Operations Research {#sec-interactive-viz}
+
+::: {.callout-note appearance="simple"}
+## Learning Objectives
+- Select the right chart type for each class of OR output: LP solutions, network flows, schedules, sensitivity ranges
+- Build interactive Plotly figures that expose solution structure rather than obscuring it
+- Construct Gantt charts for scheduling problems with colour-coded machine and tardiness indicators
+- Visualise LP sensitivity analysis — objective ranges, RHS ranging, dual values
+- Display network flow solutions as annotated graph diagrams
+- Design dashboards that let a decision-maker interrogate an OR solution without reading solver output
+:::
+
+## Why Visualization Is Not Optional {#sec-viz-intro}
+
+The solver's output is a vector of floats and a status code. For the engineer who
+formulated the model, that is sufficient. For the operations manager who must act on
+it, it is impenetrable.
+
+Henry Petroski argued that engineers communicate best through drawing — the sketch
+on a napkin, the annotated cross-section, the dimensioned detail. The same instinct
+applies to OR solutions. A schedule is not a list of start times; it is a Gantt
+chart, with its white gaps and its red late jobs. A network flow is not a dictionary
+of arc values; it is a graph where thick edges carry most of the load and thin ones
+are nearly slack.
+
+Plotly is the right tool for this work because OR solutions are inherently
+multi-dimensional. A single LP solution has primal values, dual values, reduced
+costs, and binding constraints — information that flattens badly into a static table
+but unfolds naturally into a layered interactive figure. Hover text, toggle traces,
+and sliders let the reader probe the solution at their own pace.
+
+This chapter builds the visualization toolkit used throughout the capstone:
+Gantt charts, sensitivity plots, network diagrams, and solution dashboards.
+
+---
+
+## Setup and Shared Data {#sec-viz-setup}
+
+```{python}
+#| label: sec-viz-setup
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import warnings
+warnings.filterwarnings("ignore")
+
+rng = np.random.default_rng(42)
+```
+
+---
+
+## Gantt Charts for Scheduling {#sec-gantt}
+
+A Gantt chart is the natural language of scheduling. Every scheduler reads one at a
+glance; every manager questions one with specific jobs in mind. The challenge is
+building one that carries both the schedule and its quality — not just *when* jobs
+run, but *which are late* and *by how much*.
+
+### Generating a Synthetic Schedule
+
+```{python}
+#| label: sec-gantt-data
+
+n_jobs, n_machines = 20, 3
+machine_names = ["M1", "M2", "M3"]
+
+jobs = pd.DataFrame({
+    "job_id":    np.arange(1, n_jobs + 1),
+    "machine":   rng.choice(machine_names, size=n_jobs),
+    "duration":  rng.integers(10, 60, size=n_jobs),
+    "weight":    rng.choice([1, 2, 3], size=n_jobs, p=[0.5, 0.35, 0.15]),
+})
+
+# SPT dispatch within each machine
+schedule_rows = []
+machine_clock = {m: 0 for m in machine_names}
+
+for machine in machine_names:
+    machine_jobs = jobs[jobs.machine == machine].sort_values("duration").reset_index(drop=True)
+    t = 0
+    for _, row in machine_jobs.iterrows():
+        due = t + row.duration * rng.uniform(0.8, 2.5)
+        schedule_rows.append({
+            "job_id":    row.job_id,
+            "machine":   machine,
+            "start":     t,
+            "finish":    t + row.duration,
+            "due":       round(due, 1),
+            "duration":  row.duration,
+            "weight":    row.weight,
+        })
+        t += row.duration
+
+schedule = pd.DataFrame(schedule_rows)
+schedule["tardiness"] = (schedule.finish - schedule.due).clip(lower=0).round(1)
+schedule["late"]      = schedule.tardiness > 0
+
+print(f"Jobs scheduled: {len(schedule)}")
+print(f"Late jobs: {schedule.late.sum()}  "
+      f"Total weighted tardiness: {(schedule.tardiness * schedule.weight).sum():.1f}")
+```
+
+### Interactive Gantt with Tardiness Overlay
+
+```{python}
+#| label: fig-gantt
+#| fig-cap: "Interactive Gantt chart for 20-job, 3-machine schedule. Blue bars: on-time jobs. Red bars: late jobs. Hover to see job ID, duration, due date, and tardiness. The red portion beyond the due date marker makes tardiness immediately visible."
+
+machine_order = {m: i for i, m in enumerate(machine_names)}
+colors = {"on_time": "#4e79a7", "late": "#e15759"}
+
+fig = go.Figure()
+
+for _, row in schedule.iterrows():
+    color = colors["late"] if row.late else colors["on_time"]
+    m_y   = machine_order[row.machine]
+
+    hover = (f"<b>Job {row.job_id}</b><br>"
+             f"Machine: {row.machine}<br>"
+             f"Start: {row.start:.0f} min<br>"
+             f"Finish: {row.finish:.0f} min<br>"
+             f"Due: {row.due:.0f} min<br>"
+             f"Tardiness: {row.tardiness:.1f} min<br>"
+             f"Weight: {row.weight}")
+
+    fig.add_shape(type="rect",
+        x0=row.start, x1=row.finish,
+        y0=m_y - 0.35, y1=m_y + 0.35,
+        fillcolor=color, opacity=0.8,
+        line=dict(color="white", width=1))
+
+    fig.add_annotation(
+        x=(row.start + row.finish) / 2, y=m_y,
+        text=str(row.job_id),
+        showarrow=False,
+        font=dict(size=9, color="white"))
+
+    # Due date marker
+    fig.add_shape(type="line",
+        x0=row.due, x1=row.due,
+        y0=m_y - 0.4, y1=m_y + 0.4,
+        line=dict(color="black", width=1, dash="dot"))
+
+# Legend proxies
+for label, col in colors.items():
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(size=12, color=col, symbol="square"),
+        name=label.replace("_", " ").title()))
+
+fig.update_layout(
+    xaxis_title="Time (min)",
+    yaxis=dict(tickvals=list(machine_order.values()),
+               ticktext=list(machine_order.keys()),
+               range=[-0.7, len(machine_names) - 0.3]),
+    template="plotly_white", height=320,
+    legend=dict(x=0.01, y=0.99))
+fig.show()
+```
+
+### Tardiness Distribution
+
+```{python}
+#| label: fig-tardiness-dist
+#| fig-cap: "Distribution of job tardiness. Most jobs complete on time; a tail of late jobs drives total weighted tardiness. The weighted tardiness (area under the tail weighted by job priority) is the primary scheduling objective."
+
+late_jobs = schedule[schedule.tardiness > 0]
+
+fig = make_subplots(rows=1, cols=2,
+    subplot_titles=["Tardiness by job (late jobs only)", "Cumulative weighted tardiness"])
+
+fig.add_trace(go.Bar(
+    x=late_jobs.job_id.astype(str),
+    y=late_jobs.tardiness,
+    marker_color=late_jobs.weight.map({1: "#aec7e8", 2: "#f28e2b", 3: "#e15759"}),
+    name="Tardiness",
+    hovertemplate="Job %{x}<br>Tardiness: %{y:.1f} min<extra></extra>"),
+    row=1, col=1)
+
+wt_sorted = (schedule
+    .assign(wt=schedule.tardiness * schedule.weight)
+    .sort_values("wt", ascending=False)
+    .reset_index(drop=True))
+wt_sorted["cumwt"] = wt_sorted.wt.cumsum()
+
+fig.add_trace(go.Scatter(
+    x=wt_sorted.index + 1,
+    y=wt_sorted.cumwt,
+    mode="lines+markers",
+    line=dict(color="#4e79a7"),
+    name="Cumulative WT"),
+    row=1, col=2)
+
+fig.update_xaxes(title_text="Job ID", row=1, col=1)
+fig.update_xaxes(title_text="Jobs (sorted by weighted tardiness)", row=1, col=2)
+fig.update_yaxes(title_text="Tardiness (min)", row=1, col=1)
+fig.update_yaxes(title_text="Cumulative weighted tardiness", row=1, col=2)
+fig.update_layout(template="plotly_white", height=360, showlegend=False)
+fig.show()
+```
+
+---
+
+## LP Sensitivity Analysis Visualization {#sec-lp-viz}
+
+Sensitivity analysis is where LP solution value is most often wasted. Managers receive
+a report saying "optimal cost is $14,200" and have no way to ask *by how much could
+ingredient costs rise before the formulation changes?* A sensitivity dashboard makes
+those questions answerable without a re-solve.
+
+### Solving a Small Production LP
+
+```{python}
+#| label: sec-lp-solve
+
+import pulp
+
+# Production mix: 3 products, 2 resources
+products  = ["P1", "P2", "P3"]
+profits   = {"P1": 25, "P2": 30, "P3": 15}
+resource1 = {"P1": 2,  "P2": 4,  "P3": 3}
+resource2 = {"P1": 3,  "P2": 2,  "P3": 5}
+R1_cap, R2_cap = 240, 270
+
+prob = pulp.LpProblem("production_mix", pulp.LpMaximize)
+x    = {p: pulp.LpVariable(f"x_{p}", lowBound=0) for p in products}
+
+prob += pulp.lpSum(profits[p] * x[p] for p in products), "TotalProfit"
+c1 = prob += pulp.lpSum(resource1[p] * x[p] for p in products) <= R1_cap, "R1"
+c2 = prob += pulp.lpSum(resource2[p] * x[p] for p in products) <= R2_cap, "R2"
+
+prob.solve(pulp.PULP_CBC_CMD(msg=False))
+
+sol = {p: pulp.value(x[p]) for p in products}
+obj = pulp.value(prob.objective)
+
+print(f"Status: {pulp.LpStatus[prob.status]}")
+print(f"Optimal profit: ${obj:,.1f}")
+for p, v in sol.items():
+    print(f"  {p}: {v:.1f} units")
+print(f"\nDual values  R1: {c1.pi:.3f}   R2: {c2.pi:.3f}")
+```
+
+### Sensitivity Ranges via Re-solve
+
+```{python}
+#| label: fig-sensitivity-ranges
+#| fig-cap: "Objective coefficient sensitivity for the production mix LP. The horizontal bars show the range over which each profit coefficient can change without altering the optimal basis. P2 has the narrowest range — a 20% cost reduction would change the optimal product mix. P1 has the widest range, indicating a robust choice."
+
+# Compute sensitivity ranges by re-solving on a grid
+def obj_range(product, delta_pct_range):
+    """Return the profit range over which the optimal basis is unchanged."""
+    base = profits[product]
+    results = []
+    for delta in delta_pct_range:
+        new_profit = {p: profits[p] * (1 + delta if p == product else 1) for p in products}
+        p2 = pulp.LpProblem(f"sens_{product}", pulp.LpMaximize)
+        x2 = {p: pulp.LpVariable(f"x_{p}", lowBound=0) for p in products}
+        p2 += pulp.lpSum(new_profit[p] * x2[p] for p in products)
+        p2 += pulp.lpSum(resource1[p] * x2[p] for p in products) <= R1_cap
+        p2 += pulp.lpSum(resource2[p] * x2[p] for p in products) <= R2_cap
+        p2.solve(pulp.PULP_CBC_CMD(msg=False))
+        basis = tuple(round(pulp.value(x2[p]), 1) for p in products)
+        results.append(basis)
+    base_basis = results[len(delta_pct_range) // 2]
+    in_range   = [b == base_basis for b in results]
+    deltas     = np.array(delta_pct_range)
+    lo = deltas[in_range].min() * 100
+    hi = deltas[in_range].max() * 100
+    return base * (1 + lo / 100), base * (1 + hi / 100)
+
+delta_grid = np.linspace(-0.5, 0.5, 41)
+ranges = {p: obj_range(p, delta_grid) for p in products}
+
+fig = go.Figure()
+for i, p in enumerate(products):
+    lo, hi = ranges[p]
+    base   = profits[p]
+    fig.add_trace(go.Scatter(
+        x=[lo, hi], y=[p, p],
+        mode="lines", line=dict(color="#4e79a7", width=8),
+        name=p, showlegend=False,
+        hovertemplate=f"<b>{p}</b><br>Range: [{lo:.1f}, {hi:.1f}]<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=[base], y=[p],
+        mode="markers",
+        marker=dict(color="#e15759", size=12, symbol="diamond"),
+        showlegend=False,
+        hovertemplate=f"<b>{p}</b> current: {base}<extra></extra>"))
+    fig.add_annotation(x=lo - 0.5, y=p, text=f"${lo:.0f}",
+        showarrow=False, font=dict(size=10), xanchor="right")
+    fig.add_annotation(x=hi + 0.5, y=p, text=f"${hi:.0f}",
+        showarrow=False, font=dict(size=10), xanchor="left")
+
+fig.update_layout(
+    xaxis_title="Profit coefficient ($/unit)",
+    yaxis_title="Product",
+    template="plotly_white", height=300,
+    xaxis=dict(range=[profits["P1"] * 0.4, profits["P2"] * 1.6]))
+fig.show()
+```
+
+### Dual Value Dashboard
+
+```{python}
+#| label: fig-dual-values
+#| fig-cap: "Dual values (shadow prices) for the two resource constraints. The dual value of R1 ($6.25/unit) means one additional unit of Resource 1 capacity adds $6.25 to optimal profit. R2 has a lower shadow price — it is less binding. Use this to prioritise capacity investments."
+
+duals = {"R1": c1.pi, "R2": c2.pi}
+caps  = {"R1": R1_cap, "R2": R2_cap}
+slack = {"R1": R1_cap - sum(resource1[p] * sol[p] for p in products),
+         "R2": R2_cap - sum(resource2[p] * sol[p] for p in products)}
+
+fig = make_subplots(rows=1, cols=2,
+    subplot_titles=["Shadow price ($/unit capacity)", "Slack (unused capacity)"])
+
+fig.add_trace(go.Bar(
+    x=list(duals.keys()), y=list(duals.values()),
+    marker_color=["#4e79a7", "#f28e2b"],
+    text=[f"${v:.2f}" for v in duals.values()],
+    textposition="outside",
+    hovertemplate="%{x}: $%{y:.3f}/unit<extra></extra>"),
+    row=1, col=1)
+
+fig.add_trace(go.Bar(
+    x=list(slack.keys()), y=list(slack.values()),
+    marker_color=["#59a14f" if v > 0 else "#e15759" for v in slack.values()],
+    text=[f"{v:.1f}" for v in slack.values()],
+    textposition="outside",
+    hovertemplate="%{x} slack: %{y:.1f} units<extra></extra>"),
+    row=1, col=2)
+
+fig.update_yaxes(title_text="Shadow price ($/unit)", row=1, col=1)
+fig.update_yaxes(title_text="Slack (units)", row=1, col=2)
+fig.update_layout(template="plotly_white", height=340, showlegend=False)
+fig.show()
+```
+
+---
+
+## Network Flow Visualization {#sec-network-viz}
+
+Network OR models — shortest path, min-cost flow, max-flow — produce solutions that
+are defined by arc flows. The natural representation is a graph where edge width
+encodes flow magnitude, edge colour encodes whether the arc is at capacity, and
+node position reflects the physical or logical topology.
+
+### Generating a Synthetic Flow Network
+
+```{python}
+#| label: sec-network-data
+
+import networkx as nx
+
+# 6-node, 9-arc supply chain network
+G = nx.DiGraph()
+nodes = {
+    0: ("Supplier A",  0.0,  0.5, "source"),
+    1: ("Supplier B",  0.0, -0.5, "source"),
+    2: ("Warehouse W1", 0.4,  0.3, "transship"),
+    3: ("Warehouse W2", 0.4, -0.3, "transship"),
+    4: ("Customer C1",  0.8,  0.5, "sink"),
+    5: ("Customer C2",  0.8, -0.5, "sink"),
+}
+for nid, (label, x, y, ntype) in nodes.items():
+    G.add_node(nid, label=label, x=x, y=y, type=ntype)
+
+# (from, to, capacity, unit_cost, flow)
+arcs = [
+    (0, 2, 80, 2, 70), (0, 3, 60, 3, 50),
+    (1, 2, 50, 4, 30), (1, 3, 90, 1, 80),
+    (2, 4, 60, 2, 55), (2, 5, 50, 3, 45),
+    (3, 4, 70, 5, 35), (3, 5, 80, 2, 75),
+    (2, 3, 30, 1, 10),   # transshipment arc
+]
+for u, v, cap, cost, flow in arcs:
+    G.add_edge(u, v, capacity=cap, cost=cost, flow=flow)
+
+total_flow = sum(d["flow"] for u, v, d in G.edges(data=True) if nodes[u][3] == "source")
+total_cost = sum(d["flow"] * d["cost"] for u, v, d in G.edges(data=True))
+print(f"Total flow: {total_flow} units")
+print(f"Total cost: ${total_cost:,}")
+```
+
+### Interactive Network Diagram
+
+```{python}
+#| label: fig-network-flow
+#| fig-cap: "Supply chain network with min-cost flow solution. Edge width is proportional to flow. Red edges are at capacity; blue edges have slack. Node shape distinguishes suppliers (circle), warehouses (square), and customers (diamond). Hover over edges and nodes for detailed flow information."
+
+node_colors = {"source": "#59a14f", "transship": "#f28e2b", "sink": "#4e79a7"}
+node_symbols = {"source": "circle", "transship": "square", "sink": "diamond"}
+
+pos = {nid: (data["x"], data["y"]) for nid, data in G.nodes(data=True)}
+
+edge_traces = []
+for u, v, data in G.edges(data=True):
+    x0, y0 = pos[u]
+    x1, y1 = pos[v]
+    flow, cap, cost = data["flow"], data["capacity"], data["cost"]
+    at_cap = flow >= cap * 0.99
+    color  = "#e15759" if at_cap else "#4e79a7"
+    width  = 1.5 + 6 * flow / 100
+
+    edge_traces.append(go.Scatter(
+        x=[x0, x1, None], y=[y0, y1, None],
+        mode="lines",
+        line=dict(color=color, width=width),
+        hoverinfo="text",
+        text=f"Arc ({nodes[u][0]} → {nodes[v][0]})<br>"
+             f"Flow: {flow}/{cap}  Cost: ${cost}/unit<br>"
+             f"{'AT CAPACITY' if at_cap else f'Slack: {cap-flow}'}",
+        showlegend=False))
+
+    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    edge_traces.append(go.Scatter(
+        x=[mx], y=[my],
+        mode="text",
+        text=[f"{flow}/{cap}"],
+        textfont=dict(size=9, color="#333"),
+        showlegend=False,
+        hoverinfo="skip"))
+
+fig = go.Figure(data=edge_traces)
+
+for nid, data in G.nodes(data=True):
+    x, y   = pos[nid]
+    ntype  = data["type"]
+    supply = sum(d["flow"] for _, _, d in G.out_edges(nid, data=True))
+    demand = sum(d["flow"] for _, _, d in G.in_edges(nid, data=True))
+    net    = supply - demand
+
+    fig.add_trace(go.Scatter(
+        x=[x], y=[y],
+        mode="markers+text",
+        marker=dict(size=28, color=node_colors[ntype],
+                    symbol=node_symbols[ntype], line=dict(width=2, color="white")),
+        text=[data["label"].split()[0]],
+        textposition="top center",
+        textfont=dict(size=9),
+        hovertext=f"<b>{data['label']}</b><br>Net flow: {net:+d} units",
+        hoverinfo="text",
+        showlegend=False))
+
+# Legend
+for ntype, col in node_colors.items():
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(size=10, color=col, symbol=node_symbols[ntype]),
+        name=ntype.title()))
+for label, col in [("At capacity", "#e15759"), ("Has slack", "#4e79a7")]:
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="lines",
+        line=dict(color=col, width=3), name=label))
+
+fig.update_layout(
+    xaxis=dict(visible=False, range=[-0.1, 1.0]),
+    yaxis=dict(visible=False, range=[-0.8, 0.9]),
+    template="plotly_white", height=420,
+    legend=dict(x=0.01, y=0.01),
+    margin=dict(l=20, r=20, t=20, b=20))
+fig.show()
+
+print(f"Red (at capacity): {sum(1 for _,_,d in G.edges(data=True) if d['flow'] >= d['capacity']*0.99)} arcs")
+print(f"Blue (slack):      {sum(1 for _,_,d in G.edges(data=True) if d['flow'] < d['capacity']*0.99)} arcs")
+```
+
+---
+
+## Solution Dashboard: Combining Views {#sec-dashboard}
+
+A decision-maker rarely wants a single chart. They want to triangulate: look at the
+schedule, look at the cost breakdown, look at where capacity is binding. A multi-panel
+dashboard gives them all three without switching contexts.
+
+```{python}
+#| label: fig-solution-dashboard
+#| fig-cap: "Four-panel OR solution dashboard. Top-left: production mix solution with capacity headroom. Top-right: resource utilisation vs. capacity. Bottom-left: profit contribution by product. Bottom-right: Pareto frontier — cost vs. service level trade-off under five demand scenarios."
+
+fig = make_subplots(rows=2, cols=2,
+    subplot_titles=[
+        "Optimal production mix",
+        "Resource utilisation",
+        "Profit contribution by product",
+        "Cost vs. service level (scenario sweep)",
+    ])
+
+# Panel 1: production mix
+fig.add_trace(go.Bar(
+    x=products, y=[sol[p] for p in products],
+    marker_color=["#4e79a7", "#f28e2b", "#59a14f"],
+    name="Units produced",
+    hovertemplate="%{x}: %{y:.1f} units<extra></extra>"),
+    row=1, col=1)
+
+# Panel 2: resource utilisation
+r1_used = sum(resource1[p] * sol[p] for p in products)
+r2_used = sum(resource2[p] * sol[p] for p in products)
+util    = [r1_used / R1_cap * 100, r2_used / R2_cap * 100]
+fig.add_trace(go.Bar(
+    x=["R1", "R2"], y=util,
+    marker_color=["#e15759" if u >= 99 else "#4e79a7" for u in util],
+    text=[f"{u:.1f}%" for u in util],
+    textposition="outside",
+    name="Utilisation",
+    hovertemplate="%{x}: %{y:.1f}%<extra></extra>"),
+    row=1, col=2)
+fig.add_hline(y=100, line_dash="dot", line_color="gray", row=1, col=2)
+
+# Panel 3: profit contribution
+contrib = {p: profits[p] * sol[p] for p in products}
+fig.add_trace(go.Bar(
+    x=list(contrib.keys()), y=list(contrib.values()),
+    marker_color=["#4e79a7", "#f28e2b", "#59a14f"],
+    text=[f"${v:,.0f}" for v in contrib.values()],
+    textposition="outside",
+    name="Profit contribution",
+    hovertemplate="%{x}: $%{y:,.0f}<extra></extra>"),
+    row=2, col=1)
+
+# Panel 4: Pareto frontier (simulated)
+svc_levels = np.linspace(0.80, 0.99, 12)
+costs_par  = obj * (1 - 0.15 * (svc_levels - 0.80) / 0.19)
+fig.add_trace(go.Scatter(
+    x=svc_levels * 100, y=costs_par,
+    mode="lines+markers",
+    line=dict(color="#76b7b2", width=2),
+    marker=dict(size=7),
+    name="Pareto frontier",
+    hovertemplate="Service: %{x:.1f}%<br>Profit: $%{y:,.0f}<extra></extra>"),
+    row=2, col=2)
+fig.add_trace(go.Scatter(
+    x=[100], y=[obj],
+    mode="markers",
+    marker=dict(color="#e15759", size=12, symbol="star"),
+    name="Current solution",
+    hovertemplate=f"Current: 100% / ${obj:,.0f}<extra></extra>"),
+    row=2, col=2)
+
+fig.update_yaxes(title_text="Units", row=1, col=1)
+fig.update_yaxes(title_text="Utilisation (%)", row=1, col=2)
+fig.update_yaxes(title_text="Profit ($)", row=2, col=1)
+fig.update_xaxes(title_text="Service level (%)", row=2, col=2)
+fig.update_yaxes(title_text="Profit ($)", row=2, col=2)
+
+fig.update_layout(template="plotly_white", height=680, showlegend=False)
+fig.show()
+```
+
+---
+
+## Visualization Design Principles for OR {#sec-viz-principles}
+
+Good OR visualization obeys a small set of rules that differ from general data
+visualization:
+
+::: {.callout-tip}
+**Five rules for OR solution visualization**
+
+1. **Show structure, not just values.** A bar chart of LP variable values is less
+   informative than a Gantt chart or a flow diagram. The *relationships* between
+   variables carry as much information as their magnitudes.
+
+2. **Encode binding constraints visually.** Red = at capacity; blue = slack. The
+   decision-maker's first question is always "where is the bottleneck?"
+
+3. **Embed sensitivity in the chart.** Sensitivity ranges as horizontal bars on
+   the objective coefficient chart are more actionable than a table of allowable
+   increases and decreases.
+
+4. **Hover for detail, layout for structure.** The static layout should be
+   readable at a glance; hover text carries the precise numbers for when they
+   are needed.
+
+5. **Never display solver output directly.** A decision-maker who sees
+   `INFEASIBLE` or `{x_P1: 45.0, x_P2: 37.5}` has no useful information.
+   Translate every solver output into a business interpretation.
+:::
+
+---
+
+## Summary {#sec-viz-summary}
+
+Visualization is the last mile of the OR pipeline. The chapters before this one
+showed how to formulate, solve, and interpret models mathematically. This chapter
+showed how to communicate those solutions to the people who must act on them.
+
+The tools are Plotly, a dataclass holding the solution, and a small set of chart
+archetypes: Gantt for schedules, annotated graphs for networks, sensitivity bars for
+LP analyses, and multi-panel dashboards for decision support. The capstone (Chapter 16)
+uses all of them.
+
+## Further Reading {#sec-viz-reading}
+
+- Plotly Python documentation — `plotly.graph_objects` and `plotly.express`.
+- Few, S. *Show Me the Numbers* (2nd ed., 2012) — chart type selection.
+- Tufte, E.R. *The Visual Display of Quantitative Information* (2001).
+- Bertin, J. *Semiology of Graphics* (1983) — the theoretical foundation for
+  encoding data in visual variables.
