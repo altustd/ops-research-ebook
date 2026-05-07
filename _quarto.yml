@@ -7,6 +7,7 @@ book:
   subtitle: "Combining Optimization, Machine Learning, and Simulation"
   author: "Troy Altus"
   date: "May 2026"
+  site-url: https://troyaltus.com
   search: true
   downloads: [pdf]
 

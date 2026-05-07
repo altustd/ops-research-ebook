@@ -1,2 +1,8 @@
 [build]
   publish = "docs"
+
+[[redirects]]
+  from = "/*"
+  to   = "https://troyaltus.com/:splat"
+  status = 301
+  force  = true
