@@ -51,5 +51,5 @@ test_output/
 
 /.quarto/
 
-# Local Netlify folder
-.netlify
+# Quarto intermediate build dir (not used — output-dir is docs/)
+_book/
