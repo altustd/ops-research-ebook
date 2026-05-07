@@ -1,0 +1,374 @@
+/*-- scss:rules --*/
+
+/* ============================================================
+   OR Ebook — Custom Theme
+   Dark navy sidebar, amber accents, editorial typography
+   ============================================================ */
+
+/* --- Google Fonts --- */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,300;0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+/* --- Root palette --- */
+:root {
+  --or-navy:      #0d1b2a;
+  --or-navy-mid:  #1b2d42;
+  --or-navy-soft: #243b55;
+  --or-amber:     #f5a623;
+  --or-amber-dim: #c47f0a;
+  --or-sky:       #4fc3f7;
+  --or-green:     #66bb6a;
+  --or-red:       #ef5350;
+  --or-text:      #1c2b3a;
+  --or-muted:     #5a6a7a;
+  --or-rule:      #dde4ec;
+  --or-bg:        #f8f9fb;
+  --or-card:      #ffffff;
+}
+
+/* ============================================================
+   BODY & BASE TYPOGRAPHY
+   ============================================================ */
+
+body {
+  font-family: 'IBM Plex Serif', Georgia, serif;
+  font-size: 17px;
+  line-height: 1.78;
+  color: var(--or-text);
+  background-color: var(--or-bg);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-weight: 600;
+  color: var(--or-navy);
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: 2.1rem;  border-bottom: 3px solid var(--or-amber); padding-bottom: 0.35rem; margin-top: 2rem; }
+h2 { font-size: 1.55rem; border-bottom: 1px solid var(--or-rule);  padding-bottom: 0.2rem;  margin-top: 2.2rem; }
+h3 { font-size: 1.2rem;  color: var(--or-navy-soft); }
+
+p { margin-bottom: 1.1rem; }
+
+a {
+  color: var(--or-amber-dim);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+a:hover { border-bottom-color: var(--or-amber); }
+
+/* ============================================================
+   SIDEBAR — DARK NAVY
+   ============================================================ */
+
+.sidebar, #quarto-sidebar {
+  background-color: var(--or-navy) !important;
+  border-right: none !important;
+}
+
+.sidebar .nav-link, .sidebar a,
+#quarto-sidebar .nav-link, #quarto-sidebar a {
+  color: #c8d8e8 !important;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 0.88rem;
+}
+
+.sidebar .nav-link:hover,
+#quarto-sidebar .nav-link:hover {
+  color: var(--or-amber) !important;
+  background: rgba(245, 166, 35, 0.08) !important;
+  border-radius: 4px;
+}
+
+.sidebar .nav-link.active,
+#quarto-sidebar .nav-link.active {
+  color: var(--or-amber) !important;
+  font-weight: 600;
+  background: rgba(245, 166, 35, 0.12) !important;
+  border-left: 3px solid var(--or-amber);
+  border-radius: 0 4px 4px 0;
+}
+
+/* Part headers in sidebar */
+.sidebar .sidebar-section-item,
+#quarto-sidebar .sidebar-section-item {
+  color: #7a9bb5 !important;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+/* Book title in sidebar */
+.sidebar .title,
+#quarto-sidebar .title,
+.sidebar-title {
+  color: #ffffff !important;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 600;
+}
+
+/* ============================================================
+   NAVBAR / HEADER
+   ============================================================ */
+
+.navbar, header.quarto-header {
+  background-color: var(--or-navy) !important;
+  border-bottom: 2px solid var(--or-amber) !important;
+}
+
+.navbar .navbar-brand, .navbar-brand-container a {
+  color: #ffffff !important;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 600;
+}
+
+.navbar .nav-link { color: #c8d8e8 !important; }
+.navbar .nav-link:hover { color: var(--or-amber) !important; }
+
+/* ============================================================
+   MAIN CONTENT AREA
+   ============================================================ */
+
+#quarto-content main, .content {
+  max-width: 820px;
+}
+
+/* Chapter number + title — pull apart slightly */
+.chapter-number {
+  color: var(--or-amber);
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 300;
+  font-size: 0.9em;
+}
+
+/* ============================================================
+   CODE BLOCKS
+   ============================================================ */
+
+pre, code {
+  font-family: 'IBM Plex Mono', 'Fira Code', monospace;
+  font-size: 0.875em;
+}
+
+pre.sourceCode {
+  background: #0f1e2d;
+  border: none;
+  border-left: 4px solid var(--or-amber);
+  border-radius: 0 6px 6px 0;
+  padding: 1.1rem 1.3rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+/* Inline code */
+code:not(.sourceCode) {
+  background: #e8edf2;
+  color: #c0392b;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.88em;
+}
+
+/* Code fold button */
+.code-fold-btn, details.code-fold summary {
+  color: var(--or-amber) !important;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 0.82rem;
+}
+
+/* ============================================================
+   CALLOUT BLOCKS — custom palette
+   ============================================================ */
+
+/* Note — sky blue */
+.callout-note {
+  border-left: 5px solid var(--or-sky) !important;
+  background: linear-gradient(135deg, #e8f7ff 0%, #f0faff 100%) !important;
+}
+.callout-note .callout-header { background: transparent !important; color: #0277bd !important; }
+
+/* Tip — green */
+.callout-tip {
+  border-left: 5px solid var(--or-green) !important;
+  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8f1 100%) !important;
+}
+.callout-tip .callout-header { background: transparent !important; color: #2e7d32 !important; }
+
+/* Warning — amber */
+.callout-warning {
+  border-left: 5px solid var(--or-amber) !important;
+  background: linear-gradient(135deg, #fff8e1 0%, #fffdf0 100%) !important;
+}
+.callout-warning .callout-header { background: transparent !important; color: #e65100 !important; }
+
+/* Important — red */
+.callout-important {
+  border-left: 5px solid var(--or-red) !important;
+  background: linear-gradient(135deg, #ffebee 0%, #fff5f5 100%) !important;
+}
+.callout-important .callout-header { background: transparent !important; color: #b71c1c !important; }
+
+/* Caution — muted teal */
+.callout-caution {
+  border-left: 5px solid #26a69a !important;
+  background: linear-gradient(135deg, #e0f2f1 0%, #f0faf9 100%) !important;
+}
+.callout-caution .callout-header { background: transparent !important; color: #00695c !important; }
+
+.callout { border-radius: 0 8px 8px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 0.9rem;
+  margin: 1.5rem 0;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+thead tr {
+  background-color: var(--or-navy);
+  color: #ffffff;
+}
+
+thead th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+tbody tr { background: var(--or-card); }
+tbody tr:nth-child(even) { background: #f0f4f8; }
+tbody tr:hover { background: #e6f0fa; }
+
+tbody td {
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--or-rule);
+  vertical-align: top;
+}
+
+/* ============================================================
+   EQUATIONS
+   ============================================================ */
+
+.math.display {
+  background: #f3f6fa;
+  border-left: 4px solid var(--or-navy-soft);
+  padding: 0.9rem 1.2rem;
+  border-radius: 0 6px 6px 0;
+  margin: 1.5rem 0;
+  overflow-x: auto;
+}
+
+/* ============================================================
+   FIGURES & CAPTIONS
+   ============================================================ */
+
+figure {
+  margin: 2rem 0;
+  text-align: center;
+}
+
+figcaption, .figure-caption {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 0.85rem;
+  color: var(--or-muted);
+  font-style: italic;
+  margin-top: 0.5rem;
+  text-align: center;
+}
+
+/* ============================================================
+   TOC (right-hand)
+   ============================================================ */
+
+#TOC, nav#TOC {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 0.84rem;
+  border-left: 3px solid var(--or-rule);
+  padding-left: 1rem;
+}
+
+#TOC a { color: var(--or-muted) !important; border: none; }
+#TOC a:hover { color: var(--or-amber-dim) !important; }
+#TOC a.active { color: var(--or-navy) !important; font-weight: 600; }
+
+/* ============================================================
+   BLOCKQUOTES — styled as pull quotes
+   ============================================================ */
+
+blockquote {
+  border-left: 4px solid var(--or-amber);
+  background: linear-gradient(135deg, #fffbf0 0%, #fffdf8 100%);
+  margin: 1.8rem 0;
+  padding: 1rem 1.5rem;
+  border-radius: 0 6px 6px 0;
+  font-style: italic;
+  color: #3a4a5a;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+blockquote p:last-child { margin-bottom: 0; }
+
+/* ============================================================
+   LEARNING OBJECTIVES CALLOUT — special amber treatment
+   ============================================================ */
+
+.callout-tip.learning-objectives {
+  border-left: 5px solid var(--or-amber) !important;
+  background: linear-gradient(135deg, #fff8e1 0%, #fffdf0 100%) !important;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+
+footer, .nav-footer {
+  background-color: var(--or-navy) !important;
+  color: #7a9bb5 !important;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 0.82rem;
+  border-top: 2px solid var(--or-amber);
+}
+
+footer a { color: var(--or-amber) !important; }
+
+/* ============================================================
+   SEARCH BOX
+   ============================================================ */
+
+.aa-Input, .search-input {
+  background: var(--or-navy-mid) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--or-amber) !important;
+  border-radius: 4px;
+}
+
+/* ============================================================
+   SCROLLBAR (webkit)
+   ============================================================ */
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: var(--or-bg); }
+::-webkit-scrollbar-thumb { background: #b0bec5; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--or-navy-soft); }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 768px) {
+  body { font-size: 15.5px; }
+  h1 { font-size: 1.7rem; }
+  h2 { font-size: 1.3rem; }
+  pre.sourceCode { padding: 0.8rem 0.9rem; }
+}
