@@ -229,8 +229,11 @@ prob = pulp.LpProblem("production_mix", pulp.LpMaximize)
 x    = {p: pulp.LpVariable(f"x_{p}", lowBound=0) for p in products}
 
 prob += pulp.lpSum(profits[p] * x[p] for p in products), "TotalProfit"
-c1 = prob += pulp.lpSum(resource1[p] * x[p] for p in products) <= R1_cap, "R1"
-c2 = prob += pulp.lpSum(resource2[p] * x[p] for p in products) <= R2_cap, "R2"
+
+c1 = pulp.lpSum(resource1[p] * x[p] for p in products) <= R1_cap
+c2 = pulp.lpSum(resource2[p] * x[p] for p in products) <= R2_cap
+prob += c1, "R1"
+prob += c2, "R2"
 
 prob.solve(pulp.PULP_CBC_CMD(msg=False))
 

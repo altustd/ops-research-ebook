@@ -137,6 +137,9 @@ if USE_API:
     import anthropic
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
+# Populated by sec-solution-qa cell; empty dict safe for earlier cells
+_STORED_RESPONSES: dict = {}
+
 def call_claude(system: str, user: str, max_tokens: int = 1500) -> str:
     """Call Claude API with fallback to stored response."""
     if not USE_API:
