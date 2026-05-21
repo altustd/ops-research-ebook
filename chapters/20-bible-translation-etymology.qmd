@@ -1,0 +1,431 @@
+# Bible Translation & Etymology: A Computational Case Study {#sec-bible-etymology}
+
+::: {.callout-note appearance="simple"}
+## Learning Objectives
+- Model etymological word derivation as a directed graph
+- Visualise multi-language translation chains using layered network layouts
+- Compute graph-theoretic measures (path stability, betweenness) on linguistic data
+- Interpret structural patterns in how key Biblical concepts migrated across languages
+:::
+
+::: {.callout-tip appearance="simple"}
+## Chapter Roadmap
+This chapter is the first of three on Bible translation as a data science problem:
+
+| Chapter | Topic |
+|---|---|
+| **20 (this chapter)** | **Etymology networks** — tracing word origins as directed graphs |
+| 21 *(planned)* | Translation distance — comparing KJV, NIV, ESV verse-by-verse |
+| 22 *(planned)* | Word alignment — pairing source and target words via linear programming |
+:::
+
+---
+
+## Why Bible Translation Is a Data Science Problem {#sec-bible-intro}
+
+The Bible is the most translated book in human history: over 700 complete translations
+into distinct languages, thousands of partial translations, and multiple major English
+renderings in active use today. The source texts — ancient Hebrew, Aramaic, and Koine
+Greek — are separated from modern readers by thousands of years, several intermediate
+languages, and massive shifts in cultural context.
+
+Every translation is a sequence of decisions. For each word in the source text a
+translator must answer: which target-language word best captures the meaning? When
+the source word carries several layers of meaning — literal, cultural, theological —
+no single target word can preserve all of them. The translator chooses, and that
+choice is data.
+
+This creates a natural computational object: a **directed graph** in which nodes are
+words across languages and edges are derivation or translation relationships. The
+structure of that graph reveals which concepts survived intact across millennia, which
+were transformed, and which required the target language to coin new vocabulary.
+
+---
+
+## Etymology as a Directed Graph {#sec-etymology-graph}
+
+An **etymological network** is a directed acyclic graph (DAG) $G = (V, E)$ where:
+
+- Each node $v \in V$ is a word-form in a specific language and time period
+- Each directed edge $(u, v) \in E$ encodes that $v$ was derived from, translated from,
+  or strongly influenced by $u$
+- Edge labels distinguish relation types: **transliteration** (sound preserved, script
+  changed), **semantic translation** (meaning preserved, form changed), and
+  **adaptation** (partial meaning shift to fit target culture)
+
+We study eight key Biblical terms spanning both Testaments, tracing each from its
+earliest attested source through Greek, Latin, and into modern English.
+
+```{python}
+#| label: fig-etymology-network
+#| fig-cap: "Etymology network for eight key Biblical terms. Nodes are coloured by language family; edges flow left-to-right through time. Terms like *amen* (top) pass almost unchanged across four millennia; others like *logos* acquire new philosophical weight at each translation step."
+
+import networkx as nx
+import plotly.graph_objects as go
+import pandas as pd
+
+# --- Node definitions: (id, display_label, language, layer, y_position) ---
+node_data = [
+    # Hebrew source terms (layer 0)
+    ("heb_shalom",   "שָׁלוֹם\nshalom",       "Hebrew", 0,  9.0),
+    ("heb_mashiach", "מָשִׁיחַ\nmashiach",     "Hebrew", 0,  7.0),
+    ("heb_shabbat",  "שַׁבָּת\nshabbat",       "Hebrew", 0,  5.0),
+    ("heb_amen",     "אָמֵן\namen",            "Hebrew", 0,  3.0),
+    ("heb_chesed",   "חֶסֶד\nchesed",          "Hebrew", 0,  1.0),
+    # Greek terms — some from LXX (translation of Hebrew), some original NT (layer 1)
+    ("grk_eirene",   "εἰρήνη\neirene",         "Greek",  1,  9.0),
+    ("grk_christos", "Χριστός\nChristos",       "Greek",  1,  7.0),
+    ("grk_sabbaton", "σάββατον\nsabbaton",      "Greek",  1,  5.0),
+    ("grk_amen",     "ἀμήν\namen",             "Greek",  1,  3.0),
+    ("grk_agape",    "ἀγάπη\nagape",            "Greek",  1,  1.0),
+    ("grk_logos",    "λόγος\nlogos",            "Greek",  1, -1.0),
+    ("grk_euangel",  "εὐαγγέλιον\neuangelion",  "Greek",  1, -3.0),
+    # Latin (Vulgate, ~400 CE) (layer 2)
+    ("lat_pax",      "pax",                     "Latin",  2,  9.0),
+    ("lat_christus", "Christus",                "Latin",  2,  7.0),
+    ("lat_sabbatum", "sabbatum",                "Latin",  2,  5.0),
+    ("lat_amen",     "amen",                    "Latin",  2,  3.0),
+    ("lat_caritas",  "caritas",                 "Latin",  2,  1.0),
+    ("lat_verbum",   "verbum",                  "Latin",  2, -1.0),
+    ("lat_evangelium","evangelium",             "Latin",  2, -3.0),
+    # Modern English (layer 3)
+    ("eng_peace",    "peace",                   "English", 3,  9.0),
+    ("eng_christ",   "Christ / Messiah",        "English", 3,  7.0),
+    ("eng_sabbath",  "sabbath",                 "English", 3,  5.0),
+    ("eng_amen",     "amen",                    "English", 3,  3.0),
+    ("eng_love",     "love / charity",          "English", 3,  1.0),
+    ("eng_word",     "Word",                    "English", 3, -1.0),
+    ("eng_gospel",   "gospel",                  "English", 3, -3.0),
+]
+
+# --- Edge definitions: (source_id, target_id, relation_type) ---
+edge_data = [
+    # Hebrew → Greek (Septuagint translations)
+    ("heb_shalom",   "grk_eirene",   "semantic"),
+    ("heb_mashiach", "grk_christos", "semantic"),
+    ("heb_shabbat",  "grk_sabbaton", "transliteration"),
+    ("heb_amen",     "grk_amen",     "transliteration"),
+    ("heb_chesed",   "grk_agape",    "adaptation"),   # no Greek equivalent; LXX coined agape
+    # Greek → Latin (Vulgate)
+    ("grk_eirene",   "lat_pax",      "semantic"),
+    ("grk_christos", "lat_christus", "transliteration"),
+    ("grk_sabbaton", "lat_sabbatum", "transliteration"),
+    ("grk_amen",     "lat_amen",     "transliteration"),
+    ("grk_agape",    "lat_caritas",  "adaptation"),
+    ("grk_logos",    "lat_verbum",   "semantic"),
+    ("grk_euangel",  "lat_evangelium","transliteration"),
+    # Latin → English
+    ("lat_pax",      "eng_peace",    "semantic"),
+    ("lat_christus", "eng_christ",   "transliteration"),
+    ("lat_sabbatum", "eng_sabbath",  "transliteration"),
+    ("lat_amen",     "eng_amen",     "transliteration"),
+    ("lat_caritas",  "eng_love",     "semantic"),
+    ("lat_verbum",   "eng_word",     "semantic"),
+    ("lat_evangelium","eng_gospel",  "adaptation"),   # via OE godspel
+]
+
+# Build networkx graph
+G = nx.DiGraph()
+for nid, label, lang, layer, y in node_data:
+    G.add_node(nid, label=label, language=lang, layer=layer, y=y)
+for src, tgt, rel in edge_data:
+    G.add_edge(src, tgt, relation=rel)
+
+# Assign positions
+pos = {nid: (data["layer"] * 3, data["y"]) for nid, data in G.nodes(data=True)}
+
+# Colour scheme by language
+lang_colors = {
+    "Hebrew":  "#e07b39",
+    "Greek":   "#4a7fb5",
+    "Latin":   "#7cb87c",
+    "English": "#9b6bb5",
+}
+
+# Edge colour by relation type
+rel_colors = {
+    "transliteration": "#94a3b8",
+    "semantic":        "#60a5fa",
+    "adaptation":      "#f87171",
+}
+rel_dash = {
+    "transliteration": "solid",
+    "semantic":        "dot",
+    "adaptation":      "dash",
+}
+
+# --- Build Plotly traces ---
+fig = go.Figure()
+
+# Edges
+for src, tgt, data in G.edges(data=True):
+    x0, y0 = pos[src]
+    x1, y1 = pos[tgt]
+    rel = data["relation"]
+    fig.add_trace(go.Scatter(
+        x=[x0, x1, None], y=[y0, y1, None],
+        mode="lines",
+        line=dict(color=rel_colors[rel], width=2, dash=rel_dash[rel]),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+
+# Nodes
+for lang, color in lang_colors.items():
+    ids = [n for n, d in G.nodes(data=True) if d["language"] == lang]
+    x_coords = [pos[n][0] for n in ids]
+    y_coords = [pos[n][1] for n in ids]
+    labels   = [G.nodes[n]["label"] for n in ids]
+    fig.add_trace(go.Scatter(
+        x=x_coords, y=y_coords,
+        mode="markers+text",
+        marker=dict(size=18, color=color, line=dict(color="white", width=1.5)),
+        text=labels,
+        textposition="middle right",
+        textfont=dict(size=9),
+        name=lang,
+        hovertemplate="<b>%{text}</b><br>Language: " + lang + "<extra></extra>",
+    ))
+
+# Legend entries for edge types
+for rel, col in rel_colors.items():
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="lines",
+        line=dict(color=col, width=2, dash=rel_dash[rel]),
+        name=f"Edge: {rel}",
+    ))
+
+# Layer labels
+for layer_idx, label in enumerate(["Hebrew / Aramaic", "Greek (LXX / NT)", "Latin (Vulgate)", "English"]):
+    fig.add_annotation(
+        x=layer_idx * 3, y=10.5,
+        text=f"<b>{label}</b>",
+        showarrow=False,
+        font=dict(size=11, color="#374151"),
+        xanchor="center",
+    )
+
+fig.update_layout(
+    height=620,
+    margin=dict(l=10, r=180, t=60, b=10),
+    xaxis=dict(visible=False, range=[-0.5, 10.5]),
+    yaxis=dict(visible=False, range=[-4.5, 11.5]),
+    legend=dict(x=1.01, y=0.98, bgcolor="rgba(0,0,0,0)"),
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+    title=dict(text="Biblical Etymology Network", x=0.5, font=dict(size=14)),
+)
+fig.show()
+```
+
+---
+
+## Reading the Network {#sec-etymology-reading}
+
+The graph immediately reveals three distinct migration patterns:
+
+**Pure transliteration** — the word's sound is preserved, only the script changes.
+*Shabbat* → *sabbaton* → *sabbatum* → *sabbath* is the clearest example: four languages,
+3,000 years, and the phoneme is recognisable in every step. The same holds for *amen*,
+which is arguably the most stable spoken word in Western religious history.
+
+**Semantic translation** — the meaning is carried, the form is abandoned. *Shalom*
+(wholeness, completeness, well-being) becomes Greek *eirene* (absence of conflict) and
+then Latin *pax* (a legal-political peace), each step narrowing the original Hebrew's
+scope. By the time English readers encounter *peace* they are reading a concept that has
+been filtered through two prior cultural worldviews.
+
+**Adaptation** — the target language had no equivalent, so translators improvised.
+The Hebrew *chesed* (covenant loyalty, steadfast love) had no single Greek word that
+covered its full meaning. The LXX translators reached for *agape*, a word that was
+rare and colourless in classical Greek, and effectively redefined it. Jerome's Latin
+Vulgate then rendered *agape* as *caritas* (charitable giving), and the King James Bible
+split the word across *love* and *charity* depending on context — producing the
+famous tension visible in 1 Corinthians 13 between translations.
+
+---
+
+## Network Analysis: Stability Scores {#sec-etymology-stability}
+
+We can quantify how much each word changed during its journey using a simple
+**stability score**: the fraction of edges in a term's path that are transliterations
+(form preserved) rather than semantic translations or adaptations.
+
+```{python}
+#| label: fig-stability
+#| fig-cap: "Translation stability scores for eight Biblical terms. A score of 1.0 means every step in the chain was a transliteration (sound preserved); 0.0 means every step replaced the form entirely. Terms above 0.5 are broadly recognisable across languages; those below carry significantly different cultural weight in each translation."
+
+import plotly.graph_objects as go
+
+# Paths: list of (source, target, relation) for each term's chain
+term_chains = {
+    "amen":     [("heb_amen","grk_amen","transliteration"),
+                 ("grk_amen","lat_amen","transliteration"),
+                 ("lat_amen","eng_amen","transliteration")],
+    "sabbath":  [("heb_shabbat","grk_sabbaton","transliteration"),
+                 ("grk_sabbaton","lat_sabbatum","transliteration"),
+                 ("lat_sabbatum","eng_sabbath","transliteration")],
+    "Christ/Messiah": [("heb_mashiach","grk_christos","semantic"),
+                       ("grk_christos","lat_christus","transliteration"),
+                       ("lat_christus","eng_christ","transliteration")],
+    "gospel":   [("grk_euangel","lat_evangelium","transliteration"),
+                 ("lat_evangelium","eng_gospel","adaptation")],
+    "Word":     [("grk_logos","lat_verbum","semantic"),
+                 ("lat_verbum","eng_word","semantic")],
+    "peace":    [("heb_shalom","grk_eirene","semantic"),
+                 ("grk_eirene","lat_pax","semantic"),
+                 ("lat_pax","eng_peace","semantic")],
+    "love/charity": [("heb_chesed","grk_agape","adaptation"),
+                     ("grk_agape","lat_caritas","adaptation"),
+                     ("lat_caritas","eng_love","semantic")],
+}
+
+def stability(chain):
+    if not chain:
+        return 0.0
+    translits = sum(1 for _, _, r in chain if r == "transliteration")
+    return translits / len(chain)
+
+terms  = list(term_chains.keys())
+scores = [stability(term_chains[t]) for t in terms]
+colors = ["#4a7fb5" if s >= 0.5 else "#e07b39" for s in scores]
+
+order = sorted(range(len(terms)), key=lambda i: scores[i], reverse=True)
+terms_ord  = [terms[i]  for i in order]
+scores_ord = [scores[i] for i in order]
+colors_ord = [colors[i] for i in order]
+
+fig = go.Figure(go.Bar(
+    x=scores_ord,
+    y=terms_ord,
+    orientation="h",
+    marker_color=colors_ord,
+    text=[f"{s:.2f}" for s in scores_ord],
+    textposition="outside",
+))
+
+fig.add_vline(x=0.5, line_dash="dash", line_color="#94a3b8",
+              annotation_text="0.5 threshold", annotation_position="top right")
+
+fig.update_layout(
+    xaxis=dict(title="Stability score (fraction of transliteration edges)", range=[0, 1.2]),
+    yaxis=dict(title=""),
+    height=380,
+    margin=dict(l=140, r=60, t=30, b=50),
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+)
+fig.show()
+```
+
+### What the scores reveal
+
+The stability ranking maps cleanly onto translation controversy. The three most stable
+terms (*amen*, *sabbath*, *Christ/Messiah*) are also the ones whose English forms are
+most recognisably tied to their source languages — readers of any translation know they
+are meeting a foreign-origin term.
+
+The least stable terms (*love/charity*, *peace*, *Word*) are precisely the ones that
+have generated the most scholarly debate:
+
+- **Love vs. charity** (1 Corinthians 13): the KJV chose *charity*; nearly every
+  modern translation chose *love*. Both are attempting to recover what *agape* meant
+  for a first-century Greek reader, filtered through what *caritas* meant for a
+  fifth-century Latin reader.
+- **Peace** (John 14:27, Philippians 4:7): English *peace* implies absence of conflict;
+  Hebrew *shalom* implies active wholeness and flourishing. Three translation steps
+  progressively narrowed the concept.
+- **Word** (John 1:1): Greek *logos* carried a freight of Stoic philosophy — the
+  rational principle ordering the universe. Latin *verbum* flattened it to "a spoken
+  word." English *Word* (capitalised) inherits both readings without resolving the
+  tension.
+
+---
+
+## Betweenness: Which Languages Were Hubs? {#sec-etymology-centrality}
+
+The network also lets us ask a structural question: which language acted as the most
+critical **bridge** in the transmission chain? We measure this with **betweenness
+centrality** — the fraction of shortest paths between all node pairs that pass through
+each node. A high-betweenness node is one whose removal would disconnect many
+etymological chains.
+
+```{python}
+#| label: fig-betweenness
+#| fig-cap: "Node betweenness centrality in the etymology network, grouped by language. Latin nodes dominate: every path from Hebrew/Greek to English passes through the Vulgate, making the fifth-century Jerome translation the single highest-leverage bottleneck in the transmission of Biblical vocabulary to English readers."
+
+import plotly.graph_objects as go
+
+bc = nx.betweenness_centrality(G, normalized=True)
+
+rows = []
+for nid, score in bc.items():
+    lang = G.nodes[nid]["language"]
+    label = G.nodes[nid]["label"].replace("\n", " ")
+    rows.append({"term": label, "language": lang, "betweenness": score})
+
+df = pd.DataFrame(rows).sort_values("betweenness", ascending=True)
+
+lang_colors_list = [lang_colors[r] for r in df["language"]]
+
+fig = go.Figure(go.Bar(
+    x=df["betweenness"],
+    y=df["term"],
+    orientation="h",
+    marker_color=lang_colors_list,
+    text=[f"{v:.3f}" for v in df["betweenness"]],
+    textposition="outside",
+))
+
+# Add language legend manually
+for lang, col in lang_colors.items():
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode="markers",
+        marker=dict(size=10, color=col),
+        name=lang,
+    ))
+
+fig.update_layout(
+    xaxis=dict(title="Betweenness centrality (normalised)", range=[0, 0.45]),
+    yaxis=dict(title="", tickfont=dict(size=8)),
+    height=560,
+    margin=dict(l=170, r=80, t=30, b=50),
+    legend=dict(x=1.01, y=0.98),
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+)
+fig.show()
+```
+
+Latin terms consistently show the highest betweenness. This is not surprising —
+historically, Jerome's Vulgate (completed ~405 CE) was the *only* Bible most Western
+readers or translators encountered for over a thousand years. The Reformation-era
+translators (Luther, Tyndale, the KJV committee) worked from both the original
+languages *and* the Vulgate, but the Vulgate's vocabulary choices had already shaped
+the conceptual vocabulary readers expected. A Latin word with no good English equivalent
+would be transliterated; one with a plausible English match would be translated — and
+the "plausible match" was often judged against the Vulgate rather than the Hebrew or
+Greek original.
+
+The high-betweenness Latin nodes are exactly where modern translation debates are
+fought: *caritas/love/charity*, *verbum/Word/logos*, *pax/peace/shalom*.
+
+---
+
+## Summary {#sec-bible-etymology-summary}
+
+Etymology networks turn a humanistic question — "what happened to this word?" — into
+a graph-analytic one. Key takeaways:
+
+| Observation | Graph concept |
+|---|---|
+| *Amen* crossed four languages unchanged | Low semantic-edge ratio; high stability score |
+| Latin was the critical transmission bottleneck | High betweenness centrality of Latin nodes |
+| *Agape/caritas/love* carries residual ambiguity | Adaptation edges → meaning drift |
+| *Logos/verbum/Word* compresses a philosophy | Semantic edges with narrowing scope |
+
+The next two chapters extend this framework: Chapter 21 measures *how different* major
+English translations are from each other verse-by-verse, and Chapter 22 frames the
+word-alignment problem — pairing source-language words with target-language words — as
+a linear program.
