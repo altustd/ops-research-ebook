@@ -43,7 +43,6 @@ book:
       chapters:
         - chapters/14-supply-chain-optimization.qmd
         - chapters/15-resource-scheduling.qmd
-        - chapters/20-bible-translation-etymology.qmd
     - part: "Part VII: Capstone"
       chapters:
         - chapters/16-capstone-pipeline.qmd

@@ -1,0 +1,43 @@
+---
+title: "The Translated Word"
+subtitle: "A Data Science Exploration of Bible Translation & Etymology"
+author: "Troy Altus"
+date: today
+number-sections: false
+---
+
+## Welcome
+
+The Bible is the most translated book in human history — over 700 complete translations
+into distinct languages, and multiple major English renderings in active use today.
+Behind every translation is a sequence of decisions: which word best captures this
+concept? How much of the original meaning survives the journey from ancient Hebrew
+or Greek into modern English?
+
+This manuscript applies data science tools to those questions. The source texts are
+treated as data; translation choices become measurable signals; etymological paths
+become directed graphs. The goal is not to adjudicate which translation is *correct*
+but to make the structure of translation choices visible and comparable.
+
+## Three Questions
+
+The manuscript is organised around three computational framings of Bible translation:
+
+**Part I — Word Origins**
+How did key Biblical terms travel across languages? We build etymology networks
+tracing words from Hebrew and Greek through Latin and into English, measuring
+which concepts survived intact and which were transformed at every step.
+
+**Part II — Translation Distance**
+How different are major English translations from each other, verse by verse?
+We compare KJV, NIV, ESV, and NRSV using text similarity metrics, mapping
+where translators agreed and where they diverged most sharply.
+
+**Part III — Alignment & Optimization**
+How do translators pair source-language words with target-language words?
+We frame the word alignment problem as a minimum-cost linear program and
+explore what "optimal" translation looks like under different cost functions.
+
+---
+
+Start with [Etymology Networks](chapters/01-etymology-networks.qmd).

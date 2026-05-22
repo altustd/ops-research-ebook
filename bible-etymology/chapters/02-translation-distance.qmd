@@ -1,0 +1,3 @@
+# Translation Distance {#sec-translation-distance}
+
+*Coming in Part II — comparing KJV, NIV, ESV, and NRSV verse-by-verse using text similarity metrics.*

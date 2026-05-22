@@ -1,0 +1,44 @@
+project:
+  type: book
+  output-dir: _book
+
+book:
+  title: "The Translated Word"
+  subtitle: "A Data Science Exploration of Bible Translation & Etymology"
+  author: "Troy Altus"
+  date: "May 2026"
+  search: true
+  downloads: [pdf]
+
+  chapters:
+    - index.qmd
+    - part: "Part I: Word Origins"
+      chapters:
+        - chapters/01-etymology-networks.qmd
+    - part: "Part II: Translation Distance"
+      chapters:
+        - chapters/02-translation-distance.qmd
+    - part: "Part III: Alignment & Optimization"
+      chapters:
+        - chapters/03-word-alignment-lp.qmd
+
+bibliography: references.bib
+
+format:
+  html:
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+  pdf:
+    documentclass: book
+    number-sections: true
+    toc: true
+    colorlinks: true
+
+execute:
+  echo: true
+  warning: false
+  message: false

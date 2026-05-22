@@ -1,0 +1,3 @@
+# Word Alignment as a Linear Program {#sec-word-alignment}
+
+*Coming in Part III — framing the source-to-target word pairing problem as a minimum-cost assignment LP.*
